@@ -1,0 +1,1258 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+    <title>ShowMeCSS - PTZ Dynamic Engine</title>
+
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&family=Noto+Sans+JP:wght@400;500;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
+
+    <style>
+        /* デフォルトテーマ（PTZ.jsonのデフォルト値と連動） */
+        :root {
+            --accent-primary: #3381FF;
+            --accent-active: #1A5FCC;
+            
+            /* PTZ 規格初期値 */
+            --ptz-theme-name: "ShowMeCSS Default Blue";
+            --ptz-card-radius: 24px;
+            --ptz-slider-height: 25px;
+            --ptz-toggle-width: 54px;
+            --ptz-toggle-height: 30px;
+            --ptz-toggle-knob-radius: 50%;
+            --ptz-toggle-knob-width: 22px;
+
+            /* Light Mode ベースカラー */
+            --bg-base: #F7F7F7;
+            --glass-bg: #FFFFFF;
+            --text-main: #000000;
+            --text-sub: #666666;
+            --bg-secondary: #EEEEEE;
+            --nav-bg: #FFFFFF;
+            --nav-icon-active: #000000;
+            
+            --m3-easing: cubic-bezier(0.32, 0.72, 0, 1);
+            --transition-smooth: 0.35s var(--m3-easing);
+            --card-padding: 24px;
+        }
+
+        /* ダークモード */
+        .dark-mode {
+            --bg-base: #121212;
+            --glass-bg: #1E1E1E;
+            --text-main: #FFFFFF;
+            --text-sub: #A1A1A6;
+            --bg-secondary: #2C2C2E;
+            --nav-bg: #1E1E1E;
+            --nav-icon-active: #FFFFFF;
+        }
+
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Plus Jakarta Sans', 'Noto Sans JP', sans-serif;
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            transition: background-color var(--transition-smooth), color var(--transition-smooth);
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* アプリ全体のコンテナ */
+        #app-viewport {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            overflow: hidden;
+        }
+
+        /* ヘッダー（タイトルバーは背景色と同色） */
+        header {
+            height: 64px;
+            padding: 0 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-base);
+            transition: background-color var(--transition-smooth);
+            position: relative;
+            flex-shrink: 0;
+            z-index: 10;
+        }
+        .logo {
+            font-weight: 700;
+            font-size: 18px;
+            letter-spacing: -0.5px;
+            color: var(--text-main);
+            text-align: center;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .theme-toggle {
+            position: absolute;
+            right: 24px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: none;
+            background: var(--bg-secondary);
+            color: var(--text-main);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background var(--transition-smooth), transform 0.2s;
+        }
+        .theme-toggle:active {
+            transform: scale(0.92);
+        }
+
+        /* メインスクロールエリア（オーバースクロールアニメーション適用対象） */
+        main {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 12px 20px 100px;
+            max-width: 720px;
+            width: 100%;
+            margin: 0 auto;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior-y: none; /* デフォルトのブラウザ挙動を抑制してカスタムバウンドを適用 */
+            will-change: transform;
+        }
+
+        /* スクロール要素群を包むコンテナ（Elastic Overscroll アニメーションで伸縮・バウンド） */
+        #overscroll-wrapper {
+            transform-origin: center top;
+            transition: transform 0s linear;
+        }
+        #overscroll-wrapper.spring-back {
+            transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        /* フラットソリッドカード（枠線なし、影なし） */
+        .glass-card {
+            background: var(--glass-bg);
+            border-radius: var(--ptz-card-radius);
+            padding: var(--card-padding);
+            margin-bottom: 20px;
+            box-shadow: none !important;
+            border: none !important;
+            transition: background-color var(--transition-smooth), border-radius var(--transition-smooth);
+        }
+
+        h2 { 
+            font-size: 18px; 
+            margin-top: 0; 
+            margin-bottom: 12px;
+            font-weight: 700; 
+            letter-spacing: -0.3px;
+        }
+        p {
+            font-size: 13.5px;
+            line-height: 1.5;
+            margin-top: 0;
+            margin-bottom: 16px;
+            color: var(--text-sub);
+        }
+
+        /* ------------------ UIコンポーネント設計 ------------------ */
+
+        /* リストコンポーネント（仕切り線なし） */
+        .custom-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 16px;
+        }
+        .list-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 4px;
+            border-bottom: none !important; /* 仕切り線を完全に排除 */
+        }
+        .list-item-title {
+            font-weight: 600;
+            font-size: 14px;
+        }
+        .list-item-desc {
+            font-size: 12px;
+            color: var(--text-sub);
+            margin-top: 2px;
+        }
+
+        /* 太いブルースライダー */
+        .slider-wrapper {
+            margin: 16px 0;
+        }
+        .slider-label-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .thick-slider-container {
+            position: relative;
+            width: 100%;
+            height: var(--ptz-slider-height);
+            background: var(--bg-secondary);
+            border-radius: calc(var(--ptz-slider-height) / 2);
+            overflow: hidden;
+            cursor: pointer;
+            transition: height var(--transition-smooth);
+            display: flex;
+            align-items: center;
+        }
+        .thick-slider-fill {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 50%;
+            background: var(--accent-primary);
+            transition: background-color var(--transition-smooth), width 0.05s ease-out;
+            border-radius: calc(var(--ptz-slider-height) / 2);
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding-right: 3px;
+        }
+        .thick-slider-knob {
+            width: calc(var(--ptz-slider-height) - 6px);
+            height: calc(var(--ptz-slider-height) - 6px);
+            background: #FFFFFF;
+            border-radius: 50%;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+            flex-shrink: 0;
+            transition: width var(--transition-smooth), height var(--transition-smooth);
+        }
+        .thick-slider-input {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            cursor: pointer;
+            margin: 0;
+            z-index: 5;
+        }
+
+        /* トグルスイッチ */
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 4px;
+            border-bottom: none !important; /* 仕切り線なし */
+        }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: var(--ptz-toggle-width);
+            height: var(--ptz-toggle-height);
+            transition: width var(--transition-smooth), height var(--transition-smooth);
+        }
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--bg-secondary);
+            transition: var(--transition-smooth);
+            border-radius: calc(var(--ptz-toggle-height) / 2);
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: var(--ptz-toggle-knob-width);
+            width: var(--ptz-toggle-knob-width);
+            left: 4px;
+            bottom: calc((var(--ptz-toggle-height) - var(--ptz-toggle-knob-width)) / 2);
+            background: white;
+            transition: var(--transition-smooth);
+            border-radius: var(--ptz-toggle-knob-radius);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+        }
+        input:checked + .slider {
+            background: var(--accent-primary);
+        }
+        input:checked + .slider:before {
+            transform: translateX(calc(var(--ptz-toggle-width) - var(--ptz-toggle-knob-width) - 8px));
+        }
+
+        /* アクションボタン */
+        .ai-btn {
+            border: none;
+            outline: none;
+            padding: 12px 24px;
+            border-radius: 14px;
+            font-weight: 600;
+            font-size: 14px;
+            color: white;
+            cursor: pointer;
+            background: var(--accent-primary);
+            transition: opacity 0.2s, background-color var(--transition-smooth);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            justify-content: center;
+        }
+        .ai-btn:active {
+            opacity: 0.85;
+        }
+        .ai-btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text-main);
+        }
+
+        /* インプットテキスト */
+        .glass-input-wrapper {
+            margin-bottom: 14px;
+        }
+        .glass-input {
+            width: 100%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            border: none;
+            background: var(--bg-secondary);
+            color: var(--text-main);
+            font-size: 14px;
+            font-family: inherit;
+            box-sizing: border-box;
+            transition: background var(--transition-smooth);
+        }
+        .glass-input:focus {
+            outline: 2px solid var(--accent-primary);
+        }
+
+        /* ------------------ 下付き固定ナビゲーションバー ------------------ */
+        .bottom-nav-container {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 72px;
+            background: var(--nav-bg);
+            border-top: 1px solid var(--bg-secondary);
+            z-index: 500;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            padding-bottom: env(safe-area-inset-bottom);
+            transition: background-color var(--transition-smooth), border-color var(--transition-smooth);
+        }
+        .nav-item {
+            flex: 1;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: var(--text-sub);
+            transition: color 0.25s var(--m3-easing);
+            position: relative;
+            gap: 4px;
+        }
+        .nav-item span.material-symbols-outlined {
+            font-size: 24px;
+            font-variation-settings: 'FILL' 0, 'wght' 400;
+            transition: font-variation-settings 0.2s, color 0.2s;
+        }
+        .nav-label {
+            font-size: 10px;
+            font-weight: 600;
+        }
+        .nav-item.active {
+            color: var(--nav-icon-active);
+        }
+        .nav-item.active span.material-symbols-outlined {
+            font-variation-settings: 'FILL' 1, 'wght' 700;
+        }
+
+        /* ビュー切り替え */
+        .view {
+            display: none;
+        }
+        .view.active {
+            display: block;
+            animation: viewIn 0.3s var(--m3-easing);
+        }
+        @keyframes viewIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* PTZ JSON エディタ＆ファイル操作 */
+        .ptz-dropzone {
+            border: 2px dashed var(--text-sub);
+            border-radius: var(--ptz-card-radius);
+            padding: 24px;
+            text-align: center;
+            cursor: pointer;
+            background: rgba(0, 0, 0, 0.02);
+            transition: background 0.2s, border-color 0.2s;
+            margin-bottom: 16px;
+        }
+        .dark-mode .ptz-dropzone {
+            background: rgba(255, 255, 255, 0.02);
+        }
+        .ptz-dropzone:hover {
+            background: rgba(51, 129, 255, 0.05);
+            border-color: var(--accent-primary);
+        }
+        .json-textarea {
+            width: 100%;
+            height: 220px;
+            font-family: 'Fira Code', monospace;
+            font-size: 12.5px;
+            padding: 16px;
+            background: var(--bg-secondary);
+            color: var(--text-main);
+            border: none;
+            border-radius: var(--ptz-card-radius);
+            resize: vertical;
+            outline: none;
+            line-height: 1.4;
+            transition: background var(--transition-smooth);
+        }
+        .json-textarea:focus {
+            box-shadow: 0 0 0 2px var(--accent-primary);
+        }
+
+        .preset-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .preset-btn {
+            background: var(--bg-secondary);
+            color: var(--text-main);
+            border: none;
+            padding: 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            text-align: center;
+            transition: background 0.2s, opacity 0.1s;
+        }
+        .preset-btn:active {
+            opacity: 0.8;
+        }
+
+        .code-preview {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 14px;
+            font-family: 'Fira Code', monospace;
+            font-size: 12px;
+            color: var(--text-main);
+            overflow-x: auto;
+            white-space: pre-wrap;
+            margin-bottom: 12px;
+            line-height: 1.4;
+        }
+
+        /* トースト & ダイアログ */
+        .toast {
+            position: fixed;
+            bottom: 84px;
+            left: 50%;
+            transform: translateX(-50%) translateY(20px);
+            background: var(--text-main);
+            color: var(--glass-bg);
+            padding: 10px 20px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 600;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s var(--m3-easing);
+            z-index: 2000;
+        }
+        .toast.active {
+            opacity: 1;
+            visibility: visible;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        .dialog-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000; display: flex; align-items: center; justify-content: center;
+            opacity: 0; visibility: hidden; transition: all 0.3s var(--m3-easing);
+        }
+        .dialog-overlay.active { opacity: 1; visibility: visible; }
+        .glass-dialog {
+            background: var(--glass-bg);
+            border-radius: var(--ptz-card-radius);
+            padding: 24px; max-width: 380px; width: 90%; text-align: center;
+            transform: scale(0.9) translateY(20px); transition: all 0.4s var(--m3-easing);
+        }
+        .dialog-overlay.active .glass-dialog { transform: scale(1) translateY(0); }
+
+        .badge {
+            background: var(--accent-primary);
+            color: white;
+            padding: 3px 10px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 700;
+            display: inline-block;
+        }
+
+        .color-grid {
+            display: flex;
+            gap: 10px;
+            margin: 12px 0;
+        }
+        .color-swatch {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: opacity 0.2s, border-color 0.2s;
+        }
+        .color-swatch:active, .color-swatch.active {
+            border-color: var(--text-main);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app-viewport">
+        <!-- ヘッダー -->
+        <header>
+            <div class="logo">
+                ShowMeCSS
+            </div>
+            <button class="theme-toggle" id="theme-btn" title="テーマ切り替え">
+                <span class="material-symbols-outlined">light_mode</span>
+            </button>
+        </header>
+
+        <!-- メインコンテンツ（オーバースクロールラッパー内包） -->
+        <main id="main-scroll-area">
+            <div id="overscroll-wrapper">
+                <!-- 1. カタログビュー -->
+                <section id="view-catalog" class="view active">
+                    <div class="glass-card">
+                        <h2>ShowMeCSS Dynamic Catalog</h2>
+                        <p>
+                            仕切り線を一切排したソリッドなデザインと、引っ張り時に心地よくバウンドするオーバースクロールアニメーションを搭載。PTZ規格でパラメータを即座に変更可能です。
+                        </p>
+                        <div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
+                            <button class="ai-btn" onclick="openOverviewDialog()">
+                                <span class="material-symbols-outlined">auto_awesome</span>
+                                カタログ詳細
+                            </button>
+                            <button class="ai-btn ai-btn-secondary" onclick="switchView('view-generator')">
+                                <span class="material-symbols-outlined">code</span>
+                                CSSコード抽出
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- CSS変数＆テーマ変調カタログ -->
+                    <div class="glass-card">
+                        <h2>リアルタイムCSSパラメータ設定</h2>
+                        <p>スライダー操作により、全体デザインのCSS変数が即時に適用されます。</p>
+
+                        <!-- 太いスライダー -->
+                        <div class="slider-wrapper">
+                            <div class="slider-label-row">
+                                <span>カード角丸 (--ptz-card-radius)</span>
+                                <span id="val-radius-label">24px</span>
+                            </div>
+                            <div class="thick-slider-container">
+                                <div class="thick-slider-fill" id="slider-radius-fill" style="width: 60%;">
+                                    <div class="thick-slider-knob"></div>
+                                </div>
+                                <input type="range" class="thick-slider-input" min="0" max="40" value="24" oninput="handleParamChange('cardRadius', this.value, 'px', 'slider-radius-fill', 'val-radius-label')">
+                            </div>
+                        </div>
+
+                        <div class="slider-wrapper">
+                            <div class="slider-label-row">
+                                <span>スライダー高さ (--ptz-slider-height)</span>
+                                <span id="val-slider-height-label">20px</span>
+                            </div>
+                            <div class="thick-slider-container">
+                                <div class="thick-slider-fill" id="slider-height-fill" style="width: 45%;">
+                                    <div class="thick-slider-knob"></div>
+                                </div>
+                                <input type="range" class="thick-slider-input" min="12" max="32" value="20" oninput="handleParamChange('sliderHeight', this.value, 'px', 'slider-height-fill', 'val-slider-height-label')">
+                            </div>
+                        </div>
+
+                        <div class="slider-wrapper">
+                            <div class="slider-label-row">
+                                <span>トグル幅 (--ptz-toggle-width)</span>
+                                <span id="val-toggle-width-label">54px</span>
+                            </div>
+                            <div class="thick-slider-container">
+                                <div class="thick-slider-fill" id="slider-toggle-fill" style="width: 35%;">
+                                    <div class="thick-slider-knob"></div>
+                                </div>
+                                <input type="range" class="thick-slider-input" min="40" max="85" value="54" oninput="handleParamChange('toggleWidth', this.value, 'px', 'slider-toggle-fill', 'val-toggle-width-label')">
+                            </div>
+                        </div>
+
+                        <!-- アクセントカラー変更 -->
+                        <div style="margin-top: 16px;">
+                            <span style="font-size: 13px; font-weight: 600;">アクセントカラー (--accent-primary)</span>
+                            <div class="color-grid">
+                                <div class="color-swatch active" style="background: #3381FF;" onclick="setAccentColor('#3381FF', this)"></div>
+                                <div class="color-swatch" style="background: #10B981;" onclick="setAccentColor('#10B981', this)"></div>
+                                <div class="color-swatch" style="background: #8B5CF6;" onclick="setAccentColor('#8B5CF6', this)"></div>
+                                <div class="color-swatch" style="background: #F59E0B;" onclick="setAccentColor('#F59E0B', this)"></div>
+                                <div class="color-swatch" style="background: #EC4899;" onclick="setAccentColor('#EC4899', this)"></div>
+                                <div class="color-swatch" style="background: #64748B;" onclick="setAccentColor('#64748B', this)"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- コンポーネントカタログ（仕切り線なし） -->
+                    <div class="glass-card">
+                        <h2>コンポーネントカタログ</h2>
+                        <p>仕切り線を省いたフラットレイアウトでの表示仕様です。</p>
+
+                        <div class="custom-list">
+                            <div class="list-item">
+                                <div>
+                                    <div class="list-item-title">プライマリボタン (.ai-btn)</div>
+                                    <div class="list-item-desc">主要アクション用</div>
+                                </div>
+                                <button class="ai-btn" style="padding: 6px 14px; font-size: 12px;">確認</button>
+                            </div>
+
+                            <div class="list-item">
+                                <div>
+                                    <div class="list-item-title">セカンダリボタン (.ai-btn-secondary)</div>
+                                    <div class="list-item-desc">サブ操作用スタイル</div>
+                                </div>
+                                <button class="ai-btn ai-btn-secondary" style="padding: 6px 14px; font-size: 12px;">キャンセル</button>
+                            </div>
+
+                            <div class="list-item">
+                                <div>
+                                    <div class="list-item-title">トグルスイッチ (.switch)</div>
+                                    <div class="list-item-desc">連動スイッチ</div>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+
+                            <div class="list-item">
+                                <div>
+                                    <div class="list-item-title">アクティブバッジ (.badge)</div>
+                                    <div class="list-item-desc">ステータス用</div>
+                                </div>
+                                <span class="badge">Active UI</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 2. CSSコード生成＆抽出ビュー -->
+                <section id="view-generator" class="view">
+                    <div class="glass-card">
+                        <h2>CSS スタイル抽出</h2>
+                        <p>現在の動的パラメータに基づくCSSルールセットを出力します。</p>
+
+                        <div style="margin-bottom: 12px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                <span style="font-weight: 700; font-size: 13px;">:root CSS カスタムプロパティ</span>
+                                <button class="preset-btn" style="padding: 4px 10px; margin: 0; background: var(--accent-primary); color: white;" onclick="copyCode('css-root-code')">コピー</button>
+                            </div>
+                            <div class="code-preview" id="css-root-code"></div>
+                        </div>
+
+                        <div>
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                <span style="font-weight: 700; font-size: 13px;">カード＆リスト スタイル規則</span>
+                                <button class="preset-btn" style="padding: 4px 10px; margin: 0; background: var(--accent-primary); color: white;" onclick="copyCode('css-components-code')">コピー</button>
+                            </div>
+                            <div class="code-preview" id="css-components-code"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 3. PTZ.json カスタマイズ＆管理ビュー -->
+                <section id="view-ptz" class="view">
+                    <div class="glass-card">
+                        <h2>PTZ.json 構成定義</h2>
+                        <p>「PTZ.json」の相互変換、ファイルインポート、エクスポートを行います。</p>
+
+                        <div class="ptz-dropzone" id="ptz-drop-area" onclick="triggerFileInput()">
+                            <span class="material-symbols-outlined" style="font-size: 40px; color: var(--accent-primary); margin-bottom: 8px;">upload_file</span>
+                            <div style="font-weight: 700; font-size: 14px;">ここに PTZ.json をドロップ、またはクリック</div>
+                            <div style="font-size: 12px; color: var(--text-sub); margin-top: 4px;">デザイン定義を一括適用</div>
+                            <input type="file" id="ptz-file-input" accept=".json" style="display: none;" onchange="handleFileSelect(event)">
+                        </div>
+
+                        <div style="margin-bottom: 12px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                <span style="font-weight: 700; font-size: 13px;">PTZ.json リアルタイムエディタ</span>
+                                <div style="display: flex; gap: 6px;">
+                                    <button class="preset-btn" style="padding: 4px 8px; margin: 0;" onclick="copyJsonToClipboard()">コピー</button>
+                                    <button class="preset-btn" style="padding: 4px 8px; margin: 0; background: var(--accent-primary); color: white;" onclick="downloadJsonFile()">保存 (.json)</button>
+                                </div>
+                            </div>
+                            <textarea class="json-textarea" id="ptz-code-area" oninput="validateAndApplyJson(this.value)"></textarea>
+                            <div id="json-error-msg" style="color: #FF3B30; font-size: 12px; margin-top: 6px; display: none; font-weight: 600;"></div>
+                        </div>
+
+                        <button class="ai-btn" style="width: 100%;" onclick="applyJsonFromTextArea()">
+                            <span class="material-symbols-outlined">done_all</span>
+                            JSONを手動適用
+                        </button>
+                    </div>
+
+                    <div class="glass-card">
+                        <h2>プリセット・テーマ</h2>
+                        <p>1タップでテーマ構成を切り替えます。</p>
+                        <div class="preset-grid">
+                            <button class="preset-btn" onclick="loadPreset('default')">Default Blue</button>
+                            <button class="preset-btn" onclick="loadPreset('sharpPurple')">Sharp Purple (角丸0)</button>
+                            <button class="preset-btn" onclick="loadPreset('chunkyRose')">Chunky Rose (極厚)</button>
+                            <button class="preset-btn" onclick="loadPreset('minimalGray')">Minimal Monochrome</button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 4. 実働デモビュー -->
+                <section id="view-demo" class="view">
+                    <div class="glass-card">
+                        <h2>フォーム & コントロール デモ</h2>
+                        <p>スクロールの上下限に達した際に心地よい引っ張り演出が作動します。</p>
+
+                        <div class="glass-input-wrapper">
+                            <input type="text" class="glass-input" placeholder="コンポーネント名を検索..." value="Card Component Spec">
+                        </div>
+                        <div class="glass-input-wrapper">
+                            <input type="email" class="glass-input" placeholder="メールアドレス" value="design-system@showmecss.io">
+                        </div>
+
+                        <div class="slider-wrapper">
+                            <div class="slider-label-row">
+                                <span>システム音量</span>
+                                <span id="val-demo-vol">75%</span>
+                            </div>
+                            <div class="thick-slider-container">
+                                <div class="thick-slider-fill" id="slider-demo-vol-fill" style="width: 75%;">
+                                    <div class="thick-slider-knob"></div>
+                                </div>
+                                <input type="range" class="thick-slider-input" min="0" max="100" value="75" oninput="updateThickSlider('slider-demo-vol-fill', 'val-demo-vol', this.value, '%')">
+                            </div>
+                        </div>
+
+                        <div class="toggle-row">
+                            <span>ダークモードの同期</span>
+                            <label class="switch">
+                                <input type="checkbox" id="darkmode-ptz-toggle" onchange="setTheme(this.checked)">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+
+                        <div class="toggle-row">
+                            <span>自動コード生成を有効化</span>
+                            <label class="switch">
+                                <input type="checkbox" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+
+                        <div style="margin-top: 16px; display: flex; gap: 8px;">
+                            <button class="ai-btn" onclick="showToast('設定を保存しました')">変更を保存</button>
+                            <button class="ai-btn ai-btn-secondary" onclick="showToast('リセット完了')">リセット</button>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <!-- 下付き固定ナビゲーションバー -->
+        <div class="bottom-nav-container">
+            <div class="nav-item active" data-view="view-catalog" onclick="switchView('view-catalog')">
+                <span class="material-symbols-outlined">style</span>
+                <span class="nav-label">カタログ</span>
+            </div>
+            <div class="nav-item" data-view="view-generator" onclick="switchView('view-generator')">
+                <span class="material-symbols-outlined">code</span>
+                <span class="nav-label">コード</span>
+            </div>
+            <div class="nav-item" data-view="view-ptz" onclick="switchView('view-ptz')">
+                <span class="material-symbols-outlined">settings_ethernet</span>
+                <span class="nav-label">PTZ設定</span>
+            </div>
+            <div class="nav-item" data-view="view-demo" onclick="switchView('view-demo')">
+                <span class="material-symbols-outlined">touch_app</span>
+                <span class="nav-label">デモ</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- カタログ概要ダイアログ -->
+    <div class="dialog-overlay" id="main-dialog">
+        <div class="glass-dialog">
+            <span class="material-symbols-outlined" style="font-size: 44px; color: var(--accent-primary);">style</span>
+            <h2 style="margin-top: 12px;">ShowMeCSS Catalog</h2>
+            <p style="margin-bottom: 20px;">
+                フラットソリッドUI、境界線のないリスト、そして弾性オーバースクロールを兼ね備えた最新WebUIカタログです。
+            </p>
+            <button class="ai-btn" style="width: 100%; justify-content: center;" onclick="closeDialog()">理解しました</button>
+        </div>
+    </div>
+
+    <!-- トースト通知 -->
+    <div class="toast" id="toast-message">クリップボードにコピーしました</div>
+
+    <script>
+        /**
+         * ShowMeCSS Catalog Engine & Overscroll Logic
+         */
+
+        const themeBtn = document.getElementById('theme-btn');
+        const themeIcon = themeBtn.querySelector('span');
+        const toast = document.getElementById('toast-message');
+        const ptzCodeArea = document.getElementById('ptz-code-area');
+        const jsonErrorMsg = document.getElementById('json-error-msg');
+
+        // デフォルトPTZオブジェクト
+        let currentPtz = {
+            "themeName": "ShowMeCSS Default Blue",
+            "accentColor": "#3381FF",
+            "cardRadius": 24,
+            "sliderHeight": 25,
+            "toggleWidth": 54,
+            "toggleHeight": 30,
+            "toggleKnobRadius": 50,
+            "toggleKnobWidth": 22,
+            "bgLight": "#F7F7F7",
+            "bgDark": "#121212"
+        };
+
+        // プリセットデータ
+        const presets = {
+            default: {
+                "themeName": "ShowMeCSS Default Blue",
+                "accentColor": "#3381FF",
+                "cardRadius": 24,
+                "sliderHeight": 20,
+                "toggleWidth": 54,
+                "toggleHeight": 30,
+                "toggleKnobRadius": 50,
+                "toggleKnobWidth": 22,
+                "bgLight": "#F7F7F7",
+                "bgDark": "#121212"
+            },
+            sharpPurple: {
+                "themeName": "Sharp Purple PTZ",
+                "accentColor": "#8B5CF6",
+                "cardRadius": 0,
+                "sliderHeight": 14,
+                "toggleWidth": 50,
+                "toggleHeight": 26,
+                "toggleKnobRadius": 0,
+                "toggleKnobWidth": 18,
+                "bgLight": "#FFFFFF",
+                "bgDark": "#1C1C1E"
+            },
+            chunkyRose: {
+                "themeName": "Chunky Rose PTZ",
+                "accentColor": "#EC4899",
+                "cardRadius": 32,
+                "sliderHeight": 24,
+                "toggleWidth": 64,
+                "toggleHeight": 36,
+                "toggleKnobRadius": 50,
+                "toggleKnobWidth": 28,
+                "bgLight": "#FFF1F2",
+                "bgDark": "#1A0B0E"
+            },
+            minimalGray: {
+                "themeName": "Minimal Monochrome PTZ",
+                "accentColor": "#64748B",
+                "cardRadius": 12,
+                "sliderHeight": 16,
+                "toggleWidth": 46,
+                "toggleHeight": 24,
+                "toggleKnobRadius": 50,
+                "toggleKnobWidth": 16,
+                "bgLight": "#F3F4F6",
+                "bgDark": "#0F0F10"
+            }
+        };
+
+        // --- PTZ適用のコア関数 ---
+        function applyPtz(ptz) {
+            currentPtz = { ...currentPtz, ...ptz };
+
+            const root = document.documentElement;
+            root.style.setProperty('--accent-primary', currentPtz.accentColor);
+            root.style.setProperty('--accent-active', adjustColorBrightness(currentPtz.accentColor, -15));
+            root.style.setProperty('--ptz-card-radius', `${currentPtz.cardRadius}px`);
+            root.style.setProperty('--ptz-slider-height', `${currentPtz.sliderHeight}px`);
+            root.style.setProperty('--ptz-toggle-width', `${currentPtz.toggleWidth}px`);
+            root.style.setProperty('--ptz-toggle-height', `${currentPtz.toggleHeight}px`);
+            root.style.setProperty('--ptz-toggle-knob-radius', isNaN(currentPtz.toggleKnobRadius) ? currentPtz.toggleKnobRadius : `${currentPtz.toggleKnobRadius}%`);
+            root.style.setProperty('--ptz-toggle-knob-width', `${currentPtz.toggleKnobWidth}px`);
+            
+            root.style.setProperty('--bg-base', document.body.classList.contains('dark-mode') ? currentPtz.bgDark : currentPtz.bgLight);
+
+            if (ptzCodeArea) ptzCodeArea.value = JSON.stringify(currentPtz, null, 2);
+            updateGeneratedCssCode();
+        }
+
+        function adjustColorBrightness(hex, percent) {
+            let R = parseInt(hex.substring(1, 3), 16);
+            let G = parseInt(hex.substring(3, 5), 16);
+            let B = parseInt(hex.substring(5, 7), 16);
+            R = parseInt(R * (100 + percent) / 100);
+            G = parseInt(G * (100 + percent) / 100);
+            B = parseInt(B * (100 + percent) / 100);
+            R = (R < 255) ? R : 255; G = (G < 255) ? G : 255; B = (B < 255) ? B : 255;
+            const rHex = ((R.toString(16).length == 1) ? "0" + R.toString(16) : R.toString(16));
+            const gHex = ((G.toString(16).length == 1) ? "0" + G.toString(16) : G.toString(16));
+            const bHex = ((B.toString(16).length == 1) ? "0" + B.toString(16) : B.toString(16));
+            return "#" + rHex + gHex + bHex;
+        }
+
+        function handleParamChange(key, val, unit, fillId, labelId) {
+            currentPtz[key] = parseInt(val);
+            applyPtz(currentPtz);
+
+            const label = document.getElementById(labelId);
+            if (label) label.textContent = `${val}${unit}`;
+
+            const fill = document.getElementById(fillId);
+            if (fill) {
+                const input = fill.parentElement.querySelector('input');
+                if (input) {
+                    const min = parseFloat(input.min) || 0;
+                    const max = parseFloat(input.max) || 100;
+                    const percent = ((val - min) / (max - min)) * 100;
+                    fill.style.width = `${percent}%`;
+                }
+            }
+        }
+
+        function setAccentColor(colorHex, elem) {
+            document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+            if (elem) elem.classList.add('active');
+            currentPtz.accentColor = colorHex;
+            applyPtz(currentPtz);
+            showToast(`カラーを変更: ${colorHex}`);
+        }
+
+        function updateThickSlider(fillId, labelId, val, unit) {
+            const label = document.getElementById(labelId);
+            const fill = document.getElementById(fillId);
+            if (label) label.textContent = `${val}${unit}`;
+            if (fill) {
+                const input = fill.parentElement.querySelector('input');
+                if (input) {
+                    const min = parseFloat(input.min) || 0;
+                    const max = parseFloat(input.max) || 100;
+                    const percent = ((val - min) / (max - min)) * 100;
+                    fill.style.width = `${percent}%`;
+                }
+            }
+        }
+
+        function updateGeneratedCssCode() {
+            const rootCodeElem = document.getElementById('css-root-code');
+            const compCodeElem = document.getElementById('css-components-code');
+
+            if (rootCodeElem) {
+                rootCodeElem.textContent = 
+`:root {
+  --accent-primary: ${currentPtz.accentColor};
+  --accent-active: ${adjustColorBrightness(currentPtz.accentColor, -15)};
+  --ptz-card-radius: ${currentPtz.cardRadius}px;
+  --ptz-slider-height: ${currentPtz.sliderHeight}px;
+  --ptz-toggle-width: ${currentPtz.toggleWidth}px;
+  --ptz-toggle-height: ${currentPtz.toggleHeight}px;
+  --ptz-toggle-knob-radius: ${isNaN(currentPtz.toggleKnobRadius) ? currentPtz.toggleKnobRadius : currentPtz.toggleKnobRadius + '%'};
+  --ptz-toggle-knob-width: ${currentPtz.toggleKnobWidth}px;
+  --bg-base: ${currentPtz.bgLight};
+  --glass-bg: #FFFFFF;
+}`;
+            }
+
+            if (compCodeElem) {
+                compCodeElem.textContent = 
+`.glass-card {
+  background: var(--glass-bg);
+  border-radius: var(--ptz-card-radius);
+  padding: 24px;
+  box-shadow: none !important;
+  border: none !important;
+}
+
+.list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 4px;
+  border-bottom: none !important; /* 仕切り線なし */
+}`;
+            }
+        }
+
+        function validateAndApplyJson(textVal) {
+            try {
+                const parsed = JSON.parse(textVal);
+                jsonErrorMsg.style.display = 'none';
+                applyPtz(parsed);
+                return true;
+            } catch (e) {
+                jsonErrorMsg.textContent = `JSON構文エラー: ${e.message}`;
+                jsonErrorMsg.style.display = 'block';
+                return false;
+            }
+        }
+
+        function applyJsonFromTextArea() {
+            if (validateAndApplyJson(ptzCodeArea.value)) {
+                showToast('PTZ.json 構成を適用しました');
+            } else {
+                showToast('JSONエラーを確認してください');
+            }
+        }
+
+        function loadPreset(key) {
+            if (presets[key]) {
+                applyPtz(presets[key]);
+                showToast(`プリセット [${presets[key].themeName}] をロード`);
+            }
+        }
+
+        function triggerFileInput() {
+            document.getElementById('ptz-file-input').click();
+        }
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            readFile(file);
+        }
+
+        function readFile(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const text = e.target.result;
+                if (validateAndApplyJson(text)) {
+                    showToast(`${file.name} を正しく適用しました！`);
+                } else {
+                    showToast('読み込んだJSONに不具合があります');
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        const dropArea = document.getElementById('ptz-drop-area');
+        if (dropArea) {
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropArea.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    dropArea.style.background = 'rgba(51, 129, 255, 0.1)';
+                }, false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropArea.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    dropArea.style.background = 'rgba(0, 0, 0, 0.02)';
+                }, false);
+            });
+
+            dropArea.addEventListener('drop', (e) => {
+                const dt = e.dataTransfer;
+                const file = dt.files[0];
+                if (file) readFile(file);
+            });
+        }
+
+        function copyJsonToClipboard() {
+            ptzCodeArea.select();
+            document.execCommand('copy');
+            showToast('PTZ.json をクリップボードにコピー！');
+        }
+
+        function copyCode(elementId) {
+            const elem = document.getElementById(elementId);
+            if (elem) {
+                const range = document.createRange();
+                range.selectNode(elem);
+                window.getSelection().removeAllRanges();
+                window.getSelection().addRange(range);
+                document.execCommand('copy');
+                window.getSelection().removeAllRanges();
+                showToast('CSSコードをコピーしました');
+            }
+        }
+
+        function downloadJsonFile() {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(ptzCodeArea.value);
+            const downloadAnchor = document.createElement('a');
+            downloadAnchor.setAttribute("href", dataStr);
+            downloadAnchor.setAttribute("download", `showmecss_ptz.json`);
+            document.body.appendChild(downloadAnchor);
+            downloadAnchor.click();
+            downloadAnchor.remove();
+            showToast('PTZ.json のダウンロードを開始');
+        }
+
+        // ビュー切り替え
+        const navItems = document.querySelectorAll('.nav-item');
+        const views = document.querySelectorAll('.view');
+
+        function switchView(viewId) {
+            navItems.forEach(n => {
+                n.classList.remove('active');
+                if (n.getAttribute('data-view') === viewId) {
+                    n.classList.add('active');
+                }
+            });
+
+            views.forEach(v => {
+                v.classList.remove('active');
+                if (v.id === viewId) {
+                    v.classList.add('active');
+                }
+            });
+        }
+
+        function openOverviewDialog() {
+            document.getElementById('main-dialog').classList.add('active');
+        }
+        function closeDialog() {
+            document.getElementById('main-dialog').classList.remove('active');
+        }
+
+        function showToast(msg) {
+            toast.textContent = msg;
+            toast.classList.add('active');
+            setTimeout(() => {
+                toast.classList.remove('active');
+            }, 2200);
+        }
+
+        function setTheme(isDark) {
+            document.body.classList.toggle('dark-mode', isDark);
+            themeIcon.textContent = isDark ? 'dark_mode' : 'light_mode';
+            
+            const dmToggle = document.getElementById('darkmode-ptz-toggle');
+            if (dmToggle) dmToggle.checked = isDark;
+            
+            const root = document.documentElement;
+            root.style.setProperty('--bg-base', isDark ? currentPtz.bgDark : currentPtz.bgLight);
+        }
+
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+        setTheme(prefersDark.matches);
+
+        themeBtn.addEventListener('click', () => {
+            setTheme(!document.body.classList.contains('dark-mode'));
+        });
+
+        /**
+         * 滑らかなオーバースクロール（弾性ラバーバンド）物理アニメーション実装
+         */
+        const scrollArea = document.getElementById('main-scroll-area');
+        const overscrollWrapper = document.getElementById('overscroll-wrapper');
+
+        let startY = 0;
+        let currentPull = 0;
+        let isPulling = false;
+
+        // タッチ開始
+        scrollArea.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 1) {
+                startY = e.touches[0].clientY;
+                overscrollWrapper.classList.remove('spring-back');
+            }
+        }, { passive: true });
+
+        // タッチ移動時（上端・下端での超過引っ張り判定）
+        scrollArea.addEventListener('touchmove', (e) => {
+            if (e.touches.length !== 1) return;
+            const currentY = e.touches[0].clientY;
+            const deltaY = currentY - startY;
+
+            const isAtTop = scrollArea.scrollTop <= 0;
+            const isAtBottom = Math.abs(scrollArea.scrollHeight - scrollArea.clientHeight - scrollArea.scrollTop) < 2;
+
+            if ((isAtTop && deltaY > 0) || (isAtBottom && deltaY < 0)) {
+                // 抵抗（ダンピング）を伴う計算
+                currentPull = deltaY * 0.38;
+                overscrollWrapper.style.transform = `translateY(${currentPull}px) scaleY(${1 + Math.abs(currentPull) * 0.0003})`;
+                isPulling = true;
+            }
+        }, { passive: true });
+
+        // タッチ終了（バネ跳ね返りアニメーション）
+        scrollArea.addEventListener('touchend', () => {
+            if (isPulling) {
+                overscrollWrapper.classList.add('spring-back');
+                overscrollWrapper.style.transform = 'translateY(0px) scaleY(1)';
+                currentPull = 0;
+                isPulling = false;
+            }
+        });
+
+        // マウスホイール/トラックパッド用オーバースクロールバウンド
+        let wheelTimer = null;
+        let wheelDeltaSum = 0;
+
+        scrollArea.addEventListener('wheel', (e) => {
+            const isAtTop = scrollArea.scrollTop <= 0;
+            const isAtBottom = Math.abs(scrollArea.scrollHeight - scrollArea.clientHeight - scrollArea.scrollTop) < 2;
+
+            if ((isAtTop && e.deltaY < 0) || (isAtBottom && e.deltaY > 0)) {
+                wheelDeltaSum -= e.deltaY * 0.25;
+                // 最大引っ張り量の制限
+                wheelDeltaSum = Math.max(-60, Math.min(60, wheelDeltaSum));
+
+                overscrollWrapper.classList.remove('spring-back');
+                overscrollWrapper.style.transform = `translateY(${wheelDeltaSum}px)`;
+
+                clearTimeout(wheelTimer);
+                wheelTimer = setTimeout(() => {
+                    overscrollWrapper.classList.add('spring-back');
+                    overscrollWrapper.style.transform = 'translateY(0px)';
+                    wheelDeltaSum = 0;
+                }, 120);
+            }
+        }, { passive: true });
+
+        // 初期化ロード
+        window.onload = () => {
+            applyPtz(currentPtz);
+            updateThickSlider('slider-demo-vol-fill', 'val-demo-vol', 75, '%');
+        };
+    </script>
+</body>
+</html>
